@@ -1,7 +1,7 @@
 """Analysis caching service to avoid duplicate Grok calls."""
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy import select, update
@@ -12,6 +12,11 @@ from app.models import AnalysisCache
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _utc_now() -> datetime:
+    """Get current UTC time as naive datetime for database storage."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class CacheService:
@@ -31,7 +36,7 @@ class CacheService:
         result = await db.execute(
             select(AnalysisCache).where(
                 AnalysisCache.text_hash == text_hash,
-                AnalysisCache.expires_at > datetime.utcnow(),
+                AnalysisCache.expires_at > _utc_now(),
             )
         )
         cache_entry = result.scalar_one_or_none()
@@ -57,12 +62,12 @@ class CacheService:
     ) -> None:
         """Store analysis result in cache."""
         ttl = ttl_hours or settings.cache_ttl_hours
-        expires_at = datetime.utcnow() + timedelta(hours=ttl)
+        expires_at = _utc_now() + timedelta(hours=ttl)
 
         cache_entry = AnalysisCache(
             text_hash=text_hash,
             result=result,
-            created_at=datetime.utcnow(),
+            created_at=_utc_now(),
             expires_at=expires_at,
             hit_count=0,
         )
@@ -89,7 +94,7 @@ class CacheService:
 
         result = await db.execute(
             delete(AnalysisCache).where(
-                AnalysisCache.expires_at <= datetime.utcnow()
+                AnalysisCache.expires_at <= _utc_now()
             )
         )
         return result.rowcount
@@ -113,7 +118,7 @@ class CacheService:
         # Expired entries
         expired_result = await db.execute(
             select(func.count(AnalysisCache.text_hash)).where(
-                AnalysisCache.expires_at <= datetime.utcnow()
+                AnalysisCache.expires_at <= _utc_now()
             )
         )
         expired = expired_result.scalar() or 0
@@ -131,7 +136,11 @@ _cache_service: Optional[CacheService] = None
 
 
 def get_cache_service() -> CacheService:
-    """Get global cache service instance."""
+    """
+    Get global cache service instance.
+
+    Note: CacheService is stateless, so thread-safe initialization is not critical.
+    """
     global _cache_service
     if _cache_service is None:
         _cache_service = CacheService()

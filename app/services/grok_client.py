@@ -1,4 +1,5 @@
 """Grok API client with retry logic and cost tracking."""
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -212,13 +213,37 @@ Only return valid JSON, no additional text."""
 
 # Global client instance
 _grok_client: Optional[GrokClient] = None
+_grok_init_lock: Optional[asyncio.Lock] = None
+
+
+def _get_grok_lock() -> asyncio.Lock:
+    """Get or create the initialization lock."""
+    global _grok_init_lock
+    if _grok_init_lock is None:
+        _grok_init_lock = asyncio.Lock()
+    return _grok_init_lock
 
 
 def get_grok_client() -> GrokClient:
-    """Get global Grok client instance."""
+    """
+    Get global Grok client instance.
+
+    Note: For truly thread-safe initialization in async context,
+    use get_grok_client_async() instead.
+    """
     global _grok_client
     if _grok_client is None:
         _grok_client = GrokClient()
+    return _grok_client
+
+
+async def get_grok_client_async() -> GrokClient:
+    """Get global Grok client instance with thread-safe initialization."""
+    global _grok_client
+    if _grok_client is None:
+        async with _get_grok_lock():
+            if _grok_client is None:
+                _grok_client = GrokClient()
     return _grok_client
 
 

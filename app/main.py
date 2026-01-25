@@ -72,10 +72,14 @@ app.add_middleware(
     requests_per_minute=settings.rate_limit_requests_per_minute,
     burst=settings.rate_limit_burst,
 )
+# CORS configuration
+# Note: allow_origins=["*"] with allow_credentials=True is a security risk
+# and actually rejected by browsers. Use specific origins in production.
+cors_origins = settings.cors_origins.split(",") if settings.cors_origins else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=settings.cors_origins != "",  # Only allow credentials with specific origins
     allow_methods=["*"],
     allow_headers=["*"],
 )

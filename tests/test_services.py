@@ -1,10 +1,15 @@
 """Tests for service layer."""
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.services.cache import CacheService
 from app.services.grok_client import GrokClient, GrokResponse
 from app.utils.thread_builder import ThreadBuilder, ConversationThread
+
+
+def _utc_now() -> datetime:
+    """Get current UTC time as naive datetime."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class TestCacheService:
@@ -110,7 +115,7 @@ class TestThreadBuilder:
     def test_build_simple_thread(self):
         """Should build a simple two-message thread."""
         builder = ThreadBuilder()
-        now = datetime.utcnow()
+        now = _utc_now()
 
         builder.add_tweet(1, "customer", True, now, "Help me!")
         builder.add_tweet(2, "support", False, now + timedelta(minutes=5), "Sure!", parent_id=1)
@@ -127,7 +132,7 @@ class TestThreadBuilder:
     def test_build_branching_thread(self):
         """Should handle threads with multiple replies."""
         builder = ThreadBuilder()
-        now = datetime.utcnow()
+        now = _utc_now()
 
         builder.add_tweet(1, "customer", True, now, "Question?")
         builder.add_tweet(2, "support", False, now + timedelta(minutes=1), "Answer 1", parent_id=1)
@@ -142,7 +147,7 @@ class TestThreadBuilder:
     def test_build_multiple_threads(self):
         """Should build multiple independent threads."""
         builder = ThreadBuilder()
-        now = datetime.utcnow()
+        now = _utc_now()
 
         # Thread 1
         builder.add_tweet(1, "customer1", True, now, "Question 1")
@@ -160,7 +165,7 @@ class TestThreadBuilder:
     def test_chronological_ordering(self):
         """Should order tweets chronologically."""
         builder = ThreadBuilder()
-        now = datetime.utcnow()
+        now = _utc_now()
 
         # Add in non-chronological order (all in same thread)
         builder.add_tweet(3, "customer", True, now + timedelta(minutes=10), "Third", parent_id=2)

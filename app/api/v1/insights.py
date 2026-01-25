@@ -5,7 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import String, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -49,9 +49,16 @@ async def get_insights(
 
     if topic:
         # JSONB contains query for topic matching
+        # Escape SQL LIKE special characters to prevent injection
+        escaped_topic = (
+            topic.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
         # Check if any topic in the array has a matching name
+        # Cast JSONB to text for LIKE matching
         conditions.append(
-            Insight.topics.cast(str).ilike(f"%{topic}%")
+            Insight.topics.cast(String).ilike(f"%{escaped_topic}%", escape="\\")
         )
 
     if start_date:

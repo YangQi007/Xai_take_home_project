@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     app_name: str = "X Conversation Analytics"
     debug: bool = False
 
+    # CORS - comma-separated origins, empty string means allow all (development only)
+    cors_origins: str = ""
+
     # Database
     database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/conversations"
     db_pool_size: int = 10

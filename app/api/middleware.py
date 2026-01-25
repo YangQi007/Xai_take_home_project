@@ -3,7 +3,7 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, List, Tuple
 
 from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -13,12 +13,18 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Maximum number of clients to track to prevent unbounded memory growth
+MAX_TRACKED_CLIENTS = 10000
+# Cleanup interval - clean inactive clients after this many requests
+CLEANUP_INTERVAL = 1000
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     Sliding window rate limiter middleware.
 
     Returns 429 Too Many Requests with Retry-After header when limit exceeded.
+    Includes periodic cleanup to prevent unbounded memory growth.
     """
 
     def __init__(self, app, requests_per_minute: int = 100, burst: int = 20):
@@ -26,8 +32,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.requests_per_minute = requests_per_minute
         self.burst = burst
         self.window_size = 60  # 1 minute window
-        self._requests: Dict[str, list[float]] = defaultdict(list)
+        self._requests: Dict[str, List[float]] = {}
         self._lock = asyncio.Lock()
+        self._request_count = 0
 
     def _get_client_id(self, request: Request) -> str:
         """Get client identifier from request."""
@@ -46,7 +53,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             now = time.monotonic()
             window_start = now - self.window_size
 
-            # Clean old requests
+            # Periodic cleanup of inactive clients
+            self._request_count += 1
+            if self._request_count >= CLEANUP_INTERVAL:
+                self._cleanup_inactive_clients(window_start)
+                self._request_count = 0
+
+            # Initialize client if needed
+            if client_id not in self._requests:
+                # Check if we're at capacity
+                if len(self._requests) >= MAX_TRACKED_CLIENTS:
+                    # Emergency cleanup - remove oldest entries
+                    self._cleanup_inactive_clients(window_start)
+                    # If still at capacity, allow request but don't track
+                    if len(self._requests) >= MAX_TRACKED_CLIENTS:
+                        logger.warning("Rate limiter at max capacity, allowing request without tracking")
+                        return False, 0.0
+                self._requests[client_id] = []
+
+            # Clean old requests for this client
             requests = self._requests[client_id]
             requests[:] = [t for t in requests if t > window_start]
 
@@ -66,6 +91,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Record request
             requests.append(now)
             return False, 0.0
+
+    def _cleanup_inactive_clients(self, window_start: float) -> None:
+        """Remove clients with no recent requests to prevent memory leak."""
+        inactive_clients = [
+            client_id for client_id, requests in self._requests.items()
+            if not requests or max(requests) < window_start
+        ]
+        for client_id in inactive_clients:
+            del self._requests[client_id]
+        if inactive_clients:
+            logger.debug(f"Cleaned up {len(inactive_clients)} inactive rate limit entries")
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request with rate limiting."""

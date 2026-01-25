@@ -80,18 +80,18 @@ class AdaptiveRateLimiter:
                     self._total_requests += 1
                     return True
 
-            # Check timeout
-            if timeout is not None:
-                elapsed = time.monotonic() - start_time
-                if elapsed >= timeout:
-                    self._total_throttled += 1
-                    return False
+                # Check timeout while holding lock
+                if timeout is not None:
+                    elapsed = time.monotonic() - start_time
+                    if elapsed >= timeout:
+                        self._total_throttled += 1
+                        return False
 
-            # Wait for token refill
-            wait_time = 1.0 / self._current_rate
-            if timeout is not None:
-                remaining = timeout - (time.monotonic() - start_time)
-                wait_time = min(wait_time, remaining)
+                # Calculate wait time while holding lock
+                wait_time = 1.0 / self._current_rate
+                if timeout is not None:
+                    remaining = timeout - (time.monotonic() - start_time)
+                    wait_time = min(wait_time, max(0.01, remaining))
 
             await asyncio.sleep(wait_time)
 
@@ -171,13 +171,29 @@ class AdaptiveRateLimiter:
 
 # Global instance
 _rate_limiter: Optional[AdaptiveRateLimiter] = None
+_rl_init_lock = asyncio.Lock()
 
 
 def get_rate_limiter() -> AdaptiveRateLimiter:
-    """Get global rate limiter instance."""
+    """
+    Get global rate limiter instance.
+
+    Note: For truly thread-safe initialization in async context,
+    use get_rate_limiter_async() instead.
+    """
     global _rate_limiter
     if _rate_limiter is None:
         _rate_limiter = AdaptiveRateLimiter()
+    return _rate_limiter
+
+
+async def get_rate_limiter_async() -> AdaptiveRateLimiter:
+    """Get global rate limiter instance with thread-safe initialization."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        async with _rl_init_lock:
+            if _rate_limiter is None:
+                _rate_limiter = AdaptiveRateLimiter()
     return _rate_limiter
 
 

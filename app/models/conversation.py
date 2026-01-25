@@ -2,7 +2,7 @@
 import enum
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -19,6 +19,9 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.insight import Insight
 
 
 class ConversationStatus(enum.Enum):
@@ -127,7 +130,3 @@ class Conversation(Base):
     __table_args__ = (
         Index("ix_conversations_status_created", "status", "created_at"),
     )
-
-
-# Forward reference for type hints
-from app.models.insight import Insight  # noqa: E402

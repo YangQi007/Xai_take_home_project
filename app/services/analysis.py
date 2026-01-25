@@ -1,6 +1,7 @@
 """Analysis orchestration service with two-stage filtering."""
+import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -18,6 +19,11 @@ from app.services.grok_client import (
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _utc_now() -> datetime:
+    """Get current UTC time as naive datetime for database storage."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class AnalysisService:
@@ -230,7 +236,7 @@ class AnalysisService:
             topics=analysis.get("topics", []),
             gaps=analysis.get("gaps", []),
             summary=analysis.get("summary", ""),
-            analyzed_at=datetime.utcnow(),
+            analyzed_at=_utc_now(),
             token_count=token_count,
             cost_estimate=cost_estimate,
         )
@@ -250,11 +256,27 @@ class AnalysisService:
 
 # Global instance
 _analysis_service: Optional[AnalysisService] = None
+_analysis_init_lock = asyncio.Lock()
 
 
 def get_analysis_service() -> AnalysisService:
-    """Get global analysis service instance."""
+    """
+    Get global analysis service instance.
+
+    Note: For truly thread-safe initialization in async context,
+    use get_analysis_service_async() instead.
+    """
     global _analysis_service
     if _analysis_service is None:
         _analysis_service = AnalysisService()
+    return _analysis_service
+
+
+async def get_analysis_service_async() -> AnalysisService:
+    """Get global analysis service instance with thread-safe initialization."""
+    global _analysis_service
+    if _analysis_service is None:
+        async with _analysis_init_lock:
+            if _analysis_service is None:
+                _analysis_service = AnalysisService()
     return _analysis_service

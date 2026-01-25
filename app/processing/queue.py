@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
@@ -10,6 +10,14 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Lock for thread-safe singleton initialization
+_init_lock = asyncio.Lock()
+
+
+def _utc_now() -> datetime:
+    """Get current UTC time as naive datetime."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @dataclass(order=True)
@@ -20,7 +28,7 @@ class QueueItem:
     sort_index: int = field(init=False, repr=False)
     conversation_id: UUID = field(compare=False)
     priority: int = field(default=0, compare=False)  # Higher = more priority
-    created_at: datetime = field(default_factory=datetime.utcnow, compare=False)
+    created_at: datetime = field(default_factory=_utc_now, compare=False)
     retries: int = field(default=0, compare=False)
     max_retries: int = field(default=3, compare=False)
 
@@ -63,10 +71,15 @@ class ProcessingQueue:
         return self._backpressure_events
 
     async def enqueue(
-        self, conversation_id: UUID, priority: int = 0
+        self, conversation_id: UUID, priority: int = 0, retries: int = 0
     ) -> bool:
         """
         Add item to queue. Returns False if queue is full (backpressure).
+
+        Args:
+            conversation_id: The conversation to process
+            priority: Higher = more priority
+            retries: Current retry count (for requeued items)
         """
         if self.is_full:
             self._backpressure_events += 1
@@ -76,7 +89,7 @@ class ProcessingQueue:
             )
             return False
 
-        item = QueueItem(conversation_id=conversation_id, priority=priority)
+        item = QueueItem(conversation_id=conversation_id, priority=priority, retries=retries)
         # QueueItem has sort_index for proper ordering in priority queue
         await self._queue.put(item)
         self._total_enqueued += 1
@@ -107,20 +120,22 @@ class ProcessingQueue:
     async def requeue(self, item: QueueItem, delay: float = 1.0) -> bool:
         """
         Requeue an item for retry with optional delay.
+        Preserves retry count across requeue operations.
         """
-        if item.retries >= item.max_retries:
+        new_retries = item.retries + 1
+        if new_retries > item.max_retries:
             logger.warning(
-                f"Max retries exceeded for conversation {item.conversation_id}"
+                f"Max retries ({item.max_retries}) exceeded for conversation {item.conversation_id}"
             )
             return False
 
-        item.retries += 1
-        item.priority -= 1  # Lower priority on retry
+        new_priority = item.priority - 1  # Lower priority on retry
 
         if delay > 0:
             await asyncio.sleep(delay)
 
-        return await self.enqueue(item.conversation_id, item.priority)
+        # Pass retry count to preserve it across requeue
+        return await self.enqueue(item.conversation_id, new_priority, retries=new_retries)
 
     def get_stats(self) -> dict[str, Any]:
         """Get queue statistics."""
@@ -136,13 +151,30 @@ class ProcessingQueue:
 
 # Global instance
 _processing_queue: Optional[ProcessingQueue] = None
+_queue_init_lock = asyncio.Lock()
 
 
 def get_processing_queue() -> ProcessingQueue:
-    """Get global processing queue instance."""
+    """
+    Get global processing queue instance.
+
+    Note: For truly thread-safe initialization in async context,
+    use get_processing_queue_async() instead.
+    """
     global _processing_queue
     if _processing_queue is None:
         _processing_queue = ProcessingQueue()
+    return _processing_queue
+
+
+async def get_processing_queue_async() -> ProcessingQueue:
+    """Get global processing queue instance with thread-safe initialization."""
+    global _processing_queue
+    if _processing_queue is None:
+        async with _queue_init_lock:
+            # Double-check after acquiring lock
+            if _processing_queue is None:
+                _processing_queue = ProcessingQueue()
     return _processing_queue
 
 

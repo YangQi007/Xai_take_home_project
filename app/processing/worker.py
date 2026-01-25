@@ -70,6 +70,7 @@ class Worker:
     async def _run(self) -> None:
         """Main worker loop."""
         while self._running:
+            item = None
             try:
                 # Get item from queue with timeout
                 item = await self.queue.dequeue(timeout=1.0)
@@ -77,13 +78,20 @@ class Worker:
                     continue
 
                 await self._process_item(item)
-                self.queue.task_done()
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Worker {self.worker_id} error: {e}")
                 await asyncio.sleep(1.0)  # Brief pause on error
+            finally:
+                # Always mark task as done if we dequeued an item
+                if item is not None:
+                    try:
+                        self.queue.task_done()
+                    except ValueError:
+                        # task_done called too many times - ignore
+                        pass
 
     async def _process_item(self, item: QueueItem) -> None:
         """Process a single queue item."""

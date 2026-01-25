@@ -52,8 +52,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
+        # Note: async with handles session.close() automatically
 
 
 @asynccontextmanager
@@ -66,5 +65,4 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
+        # Note: async with handles session.close() automatically

@@ -4,7 +4,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Optional, TypeVar
 
 from app.config import get_settings
 
@@ -185,10 +185,22 @@ class CircuitBreaker:
         )
 
     async def execute(
-        self, func: Callable[..., Any], *args: Any, **kwargs: Any
+        self, func: Callable[..., Awaitable[T]], *args: Any, **kwargs: Any
     ) -> T:
         """
-        Execute a function with circuit breaker protection.
+        Execute an async function with circuit breaker protection.
+
+        Args:
+            func: An async function to execute
+            *args: Positional arguments to pass to func
+            **kwargs: Keyword arguments to pass to func
+
+        Returns:
+            The result of func
+
+        Raises:
+            CircuitOpenError: If the circuit is open
+            Exception: Any exception raised by func
         """
         if not await self.can_execute():
             retry_after = self.get_retry_after()
@@ -198,20 +210,36 @@ class CircuitBreaker:
             result = await func(*args, **kwargs)
             await self.record_success()
             return result
-        except Exception as e:
+        except Exception:
             await self.record_failure()
             raise
 
 
 # Global instance
 _circuit_breaker: Optional[CircuitBreaker] = None
+_cb_init_lock = asyncio.Lock()
 
 
 def get_circuit_breaker() -> CircuitBreaker:
-    """Get global circuit breaker instance."""
+    """
+    Get global circuit breaker instance.
+
+    Note: For truly thread-safe initialization in async context,
+    use get_circuit_breaker_async() instead.
+    """
     global _circuit_breaker
     if _circuit_breaker is None:
         _circuit_breaker = CircuitBreaker()
+    return _circuit_breaker
+
+
+async def get_circuit_breaker_async() -> CircuitBreaker:
+    """Get global circuit breaker instance with thread-safe initialization."""
+    global _circuit_breaker
+    if _circuit_breaker is None:
+        async with _cb_init_lock:
+            if _circuit_breaker is None:
+                _circuit_breaker = CircuitBreaker()
     return _circuit_breaker
 
 
